@@ -1,0 +1,1085 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Симулятор A/B-тестов — Александр Федоров</title>
+  <meta name="description" content="Интерактивный калькулятор размера выборки и Монте-Карло симулятор A/B-тестов: мощность, ошибки I и II рода, проклятие победителя — на живых графиках.">
+
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Симулятор A/B-тестов — Александр Федоров">
+  <meta property="og:description" content="Посчитайте размер выборки, увидьте мощность на графике и прогоните тысячи экспериментов в Монте-Карло.">
+  <meta property="og:image" content="https://alex91132.github.io/assets/og.png">
+  <meta property="og:url" content="https://alex91132.github.io/ab-simulator/">
+  <meta name="twitter:card" content="summary_large_image">
+
+  <!-- Общие стили сайта -->
+  <link rel="stylesheet" href="styles.css">
+
+  <!-- Стили, специфичные для этой страницы -->
+  <style>
+    /* Цвета зон статистических ошибок — свои переменные, независимые от темы */
+    :root {
+      --st-red:   #ef4444;  /* ошибка I рода (α) */
+      --st-green: #10b981;  /* мощность */
+      --st-amber: #f59e0b;  /* ошибка II рода (β) */
+      --st-h0:    #94a3b8;  /* распределение H0 */
+    }
+
+    /* ---------- Панели управления ---------- */
+    .ctls {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 14px;
+      margin: 18px 0;
+    }
+    .ctl {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px;
+      min-width: 0;
+    }
+    .ctl label { font-size: 14px; font-weight: 600; display: block; margin-bottom: 8px; }
+    .ctl .hint { font-size: 12.5px; color: var(--muted); margin: 8px 0 0; line-height: 1.45; }
+    .ctl-row { display: flex; align-items: center; gap: 10px; }
+    .ctl-row input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); }
+    input[type=number], select {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      padding: 6px 8px;
+      font-size: 15px;
+      width: 92px;
+      font-family: inherit;
+    }
+    input[type=number]:focus, select:focus, .seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+    /* Переключатель режима (сегмент-контрол) */
+    .seg { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 8px; }
+    .seg button {
+      background: transparent; border: none; color: var(--muted);
+      padding: 5px 6px; cursor: pointer; font-size: 13px; font-family: inherit; line-height: 1.4;
+    }
+    .seg button + button { border-left: 1px solid var(--border); }
+    .seg button.on { background: var(--accent); color: #fff; }
+
+    /* ---------- Результаты калькулятора ---------- */
+    .res-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 12px;
+      margin: 18px 0;
+    }
+    .res {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--accent);
+      border-radius: 10px;
+      padding: 12px 14px;
+    }
+    .res .num { font-size: 25px; font-weight: 700; color: var(--accent); line-height: 1.25; }
+    .res .num small { font-size: 14px; font-weight: 600; }
+    .res .lab { font-size: 13px; color: var(--muted); margin-top: 2px; }
+    .warn { display: none; color: var(--st-amber); font-size: 14px; margin-top: 6px; }
+    .warn.show { display: block; }
+    .interpret { font-size: 16.5px; }
+    details.formula { margin-top: 14px; }
+    details.formula summary { cursor: pointer; color: var(--muted); font-size: 14.5px; }
+    details.formula pre {
+      background: var(--card); border: 1px solid var(--border);
+      padding: 14px 16px; border-radius: 8px; overflow-x: auto;
+      font-size: 13.5px; line-height: 1.65; margin-top: 10px;
+    }
+
+    /* ---------- Графики ---------- */
+    .chart {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 12px 8px;
+      margin: 14px 0;
+    }
+    .chart svg { display: block; width: 100%; height: auto; }
+    .ch-title { font-size: 15px; margin: 4px 4px 0; color: var(--muted); }
+    .lg { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 10px 4px 6px; }
+    .lg span { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; color: var(--muted); }
+    .lg b { color: var(--text); font-weight: 600; }
+    .sw { width: 11px; height: 11px; border-radius: 3px; display: inline-block; flex-shrink: 0; }
+
+    /* ---------- Симуляция ---------- */
+    .sim-controls {
+      background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+      padding: 14px; margin: 18px 0;
+      display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-end;
+    }
+    .sim-controls .ctl { background: transparent; border: none; padding: 0; flex: 1; min-width: 250px; }
+    .te-val { font-size: 16px; font-weight: 700; color: var(--accent); white-space: nowrap; }
+    .chips { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+    .chip {
+      background: var(--bg); border: 1px solid var(--border); border-radius: 999px;
+      color: var(--muted); font-size: 12.5px; padding: 3px 11px; cursor: pointer; font-family: inherit;
+    }
+    .chip:hover { border-color: var(--accent); color: var(--accent); }
+    .sim-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin: 18px 0; }
+    .sim-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+    .sim-card .k { font-size: 24px; font-weight: 700; line-height: 1.25; }
+    .sim-card .l { font-size: 13px; color: var(--muted); margin-top: 2px; line-height: 1.45; }
+    .sim-empty {
+      background: var(--card); border: 1px dashed var(--border); border-radius: 12px;
+      color: var(--muted); text-align: center; padding: 34px 20px; font-size: 15px;
+    }
+    .insight { border-left: 3px solid var(--accent); margin: 18px 0; padding: 4px 20px; }
+    .insight h4 { margin: 10px 0 4px; }
+    .insight p { margin: 0 0 10px; font-size: 16px; }
+    .stale { font-size: 13.5px; color: var(--st-amber); margin: -6px 0 12px; }
+
+    /* ---------- Разное ---------- */
+    .copy-btn {
+      background: transparent; border: 1px solid var(--border); border-radius: 8px;
+      color: var(--muted); padding: 5px 12px; cursor: pointer; font-size: 13.5px; font-family: inherit;
+    }
+    .copy-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .how-list li { margin-bottom: 8px; font-size: 16px; }
+    code.kbd {
+      background: var(--card); border: 1px solid var(--border); border-radius: 5px;
+      padding: 1px 6px; font-size: 14px;
+    }
+    @media (max-width: 620px) {
+      h1 { font-size: 30px; }
+      .ctl-row input[type=range] { flex: 1; }
+    }
+  </style>
+
+  <!-- Тема применяется до отрисовки (как на всём сайте) -->
+  <script>
+    (function () {
+      var t = localStorage.getItem('theme');
+      if (t) document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
+</head>
+<body>
+
+  <!-- ШАПКА -->
+  <header class="site-header">
+    <div class="container">
+      <a href="https://alex91132.github.io/" class="site-logo">← Портфолио</a>
+      <nav class="site-nav">
+        <a href="#calc">Калькулятор</a>
+        <a href="#power">Мощность</a>
+        <a href="#sim">Симуляция</a>
+        <a href="#how">Принципы</a>
+        <button id="themeBtn" class="theme-toggle" onclick="toggleTheme()" aria-label="Сменить тему">🌙</button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- ЗАГОЛОВОК СТРАНИЦЫ -->
+    <section class="intro">
+      <h1>Симулятор A/B-тестов</h1>
+      <p class="lead">
+        Посчитайте размер выборки, увидьте, что такое мощность, и прогоните тысячи
+        экспериментов в Монте-Карло — чтобы решения принимались числом, а не интуицией.
+      </p>
+      <div class="tags" style="margin-top:14px;">
+        <span class="tag">z-тест долей</span>
+        <span class="tag">размер выборки</span>
+        <span class="tag">мощность</span>
+        <span class="tag">Монте-Карло</span>
+        <span class="tag">чистый HTML + JS, без библиотек</span>
+      </div>
+    </section>
+
+    <!-- 1. КАЛЬКУЛЯТОР -->
+    <section id="calc">
+      <h2>1 · Калькулятор размера выборки</h2>
+      <p style="color:var(--muted);">
+        Задайте параметры — размер выборки, порог значимости и длительность теста
+        пересчитываются на лету.
+      </p>
+
+      <div class="ctls">
+        <div class="ctl">
+          <label for="inp-base">Базовая конверсия, %</label>
+          <div class="ctl-row">
+            <input type="range" id="rng-base" min="1" max="95" step="0.5" value="10" aria-label="Базовая конверсия, проценты">
+            <input type="number" id="inp-base" min="1" max="95" step="0.5" value="10" aria-label="Базовая конверсия, проценты">
+          </div>
+          <p class="hint">Доля конверсии в контрольной группе сейчас</p>
+        </div>
+
+        <div class="ctl">
+          <label for="inp-mde">MDE — минимальный эффект</label>
+          <div class="seg" role="group" aria-label="Тип MDE">
+            <button type="button" id="mde-rel" class="on">относит., %</button><button type="button" id="mde-abs">абсолют., п.п.</button>
+          </div>
+          <div class="ctl-row">
+            <input type="range" id="rng-mde" min="1" max="50" step="0.5" value="10" aria-label="MDE">
+            <input type="number" id="inp-mde" min="0.1" max="50" step="0.5" value="10" aria-label="MDE">
+          </div>
+          <p class="hint">Эффект меньше этого тест, скорее всего, не заметит</p>
+        </div>
+
+        <div class="ctl">
+          <label for="rng-alpha">Уровень значимости α, %</label>
+          <div class="ctl-row">
+            <input type="range" id="rng-alpha" min="0.5" max="20" step="0.5" value="5" aria-label="Уровень значимости, проценты">
+            <output id="out-alpha" for="rng-alpha" style="width:92px; font-weight:600;">5 %</output>
+          </div>
+          <p class="hint">Вероятность «ложной победы» при отсутствии эффекта (ошибка I рода)</p>
+        </div>
+
+        <div class="ctl">
+          <label for="rng-power">Мощность, %</label>
+          <div class="ctl-row">
+            <input type="range" id="rng-power" min="50" max="99" step="1" value="80" aria-label="Мощность, проценты">
+            <output id="out-power" for="rng-power" style="width:92px; font-weight:600;">80 %</output>
+          </div>
+          <p class="hint">Вероятность поймать эффект размером не меньше MDE (1 − β)</p>
+        </div>
+
+        <div class="ctl">
+          <label>Критерий</label>
+          <div class="seg" role="group" aria-label="Тип критерия">
+            <button type="button" id="tail-2" class="on">двусторонний</button><button type="button" id="tail-1">односторонний</button>
+          </div>
+          <p class="hint">Двусторонний — если эффект может оказаться любым; односторонний требует меньше данных, но «ставит» только на рост</p>
+        </div>
+
+        <div class="ctl">
+          <label for="inp-traffic">Трафик, визитов в день</label>
+          <div class="ctl-row">
+            <input type="number" id="inp-traffic" min="100" step="100" value="10000" aria-label="Трафик в день" style="width:130px;">
+          </div>
+          <p class="hint">Для оценки длительности теста при сплите 50/50</p>
+        </div>
+      </div>
+
+      <div class="res-grid">
+        <div class="res">
+          <div class="num" id="res-n">…</div>
+          <div class="lab">наблюдений на вариант</div>
+        </div>
+        <div class="res">
+          <div class="num" id="res-total">…</div>
+          <div class="lab">всего наблюдений (A + B)</div>
+        </div>
+        <div class="res">
+          <div class="num" id="res-p2">…</div>
+          <div class="lab">ожидаемая конверсия B</div>
+        </div>
+        <div class="res">
+          <div class="num" id="res-days">…</div>
+          <div class="lab">длительность при заданном трафике</div>
+        </div>
+      </div>
+
+      <p class="warn" id="res-warn">⚠ MDE упирается в потолок: конверсия B ограничена 99,5%, расчёт идёт по ней.</p>
+
+      <p class="interpret" id="res-interpret">…</p>
+
+      <p style="margin-top:14px;">
+        <button type="button" class="copy-btn" id="copyLink">Скопировать ссылку с параметрами</button>
+      </p>
+
+      <details class="formula">
+        <summary>Показать формулу и промежуточные значения</summary>
+        <pre id="res-formula"></pre>
+      </details>
+    </section>
+
+    <!-- 2. МОЩНОСТЬ -->
+    <section id="power">
+      <h2>2 · Мощность — глазами</h2>
+      <p>
+        Каждый прогон теста даёт оценку эффекта — точку на горизонтальной оси
+        (изменение конверсии в процентных пунктах). Серая кривая показывает, как
+        распределятся оценки, если эффекта нет (H₀), синяя — если истинный эффект
+        равен MDE (H₁).
+      </p>
+
+      <div class="chart">
+        <div id="distChart" role="img" aria-label="График распределений оценки эффекта при H0 и H1 с зонами ошибок"></div>
+        <div class="lg" id="distLegend"></div>
+      </div>
+
+      <p>
+        Тест объявляет победу, когда оценка эффекта выходит за порог значимости
+        (пунктирные линии). Тогда: красные зоны под H₀ — это <b>ложные победы</b>
+        (их ровно α), янтарная зона под H₁ — <b>пропущенный эффект</b> (β),
+        зелёная — <b>пойманный эффект</b> (мощность). Двигайте ползунки в калькуляторе —
+        картинка пересчитывается.
+      </p>
+    </section>
+
+    <!-- 3. СИМУЛЯЦИЯ -->
+    <section id="sim">
+      <h2>3 · Тысячи экспериментов в Монте-Карло</h2>
+      <p>
+        Калькулятор «обещает» мощность 80%. Проверим: запустим множество независимых
+        экспериментов с истинным эффектом, который вы задали сами, — и посмотрим,
+        что получается на самом деле. Истинный эффект может отличаться от MDE:
+        поставьте ноль и посмотрите, как часто тест всё равно «находит победу».
+      </p>
+
+      <div class="sim-controls">
+        <div class="ctl">
+          <label for="rng-te">Истинный эффект (его знает только симулятор)</label>
+          <div class="ctl-row">
+            <input type="range" id="rng-te" min="0" max="2" step="0.02" value="1" aria-label="Истинный эффект, процентные пункты">
+            <span class="te-val" id="out-te">+1,00 п.п.</span>
+          </div>
+          <div class="chips">
+            <button type="button" class="chip" data-te="0">0 — эффекта нет</button>
+            <button type="button" class="chip" data-te="half">½ MDE</button>
+            <button type="button" class="chip" data-te="mde">= MDE</button>
+          </div>
+        </div>
+        <div class="ctl">
+          <label for="sel-runs">Число экспериментов</label>
+          <select id="sel-runs">
+            <option value="1000">1 000</option>
+            <option value="5000" selected>5 000</option>
+            <option value="10000">10 000</option>
+          </select>
+          <p class="hint">Используется n = <b id="sim-n">…</b> на вариант из калькулятора</p>
+        </div>
+        <div class="ctl">
+          <label>&nbsp;</label>
+          <button type="button" class="btn-primary" id="runBtn" style="width:100%;">Запустить симуляцию</button>
+        </div>
+      </div>
+
+      <div id="simResults">
+        <div class="sim-empty">
+          Настройте параметры и нажмите «Запустить симуляцию» —<br>
+          результаты появятся здесь.
+        </div>
+      </div>
+    </section>
+
+    <!-- 4. ПРИНЦИПЫ -->
+    <section id="how">
+      <h2>Как это считается</h2>
+
+      <h3>Модель</h3>
+      <ul class="how-list">
+        <li>Метрика — доля (конверсия), сплит 50/50, один тест A против B.</li>
+        <li>Проверка — z-тест для двух долей со объединённой дисперсией (pooled SE):
+          z = (p̂<sub>B</sub> − p̂<sub>A</sub>) / √(2·p̄(1−p̄)/n), где p̄ — средняя наблюдаемых долей.</li>
+        <li>Размер выборки — стандартная формула с нормальной аппроксимацией
+          (пункт «Показать формулу» в калькуляторе раскрывает её с числами).
+          Для конверсий и объёмах выборки из калькулятора аппроксимация корректна.</li>
+        <li>Симуляция генерирует p̂<sub>A</sub> и p̂<sub>B</sub> из нормальных распределений
+          с дисперсиями p(1−p)/n — это ровно та модель, на которой основана формула,
+          поэтому доли значимых прогонов совпадают с α и мощностью.</li>
+      </ul>
+
+      <h3>Честные ограничения</h3>
+      <ul class="how-list">
+        <li><b>Фиксированный горизонт.</b> Всё выше — про тест с заранее рассчитанным объёмом.
+          Если «подглядывать» и останавливаться при первом p &lt; 0,05, реальный α
+          многократно вырастает. Здесь этого не смоделировать — это уже другой тест
+          (sequential testing).</li>
+        <li>Нет поправок на множественные сравнения, сезонность, новизну и
+          пересечение групп — в реальном тесте их учитывают отдельно.</li>
+        <li>Значимый результат ≠ большой эффект: среди «победителей» измеренный лифт
+          в среднем завышен — это видно в симуляции («проклятие победителя»).</li>
+      </ul>
+
+      <h3>Проверять себя полезно</h3>
+      <ul class="how-list">
+        <li>Evan Miller — <a href="https://www.evanmiller.org/ab-testing/sample-size.html" target="_blank" rel="noopener">Sample Size Calculator</a> — эталонная формула размера выборки.</li>
+        <li>Kohavi, Tang, Xu — <a href="https://experimentguide.com/" target="_blank" rel="noopener">Trustworthy Online Controlled Experiments</a> — каноничная книга про A/B-тесты.</li>
+        <li>Методология оттачивалась на курсе «Симулятор A/B-тестов» (Karpov.courses);
+          реализация — с нуля на чистом JavaScript, без единой библиотеки.</li>
+      </ul>
+    </section>
+
+  </main>
+
+  <!-- ПОДВАЛ -->
+  <footer class="site-footer">
+    <div class="container">
+      © 2026 Александр Федоров ·
+      <a href="https://t.me/Alex91132" target="_blank" rel="noopener">@Alex91132</a> ·
+      <a href="https://github.com/Alex91132/Alex91132.github.io" target="_blank" rel="noopener">исходники</a>
+    </div>
+  </footer>
+
+  <!-- Переключатель темы — как на всём сайте -->
+  <script>
+    function currentTheme() {
+      var t = document.documentElement.getAttribute('data-theme');
+      if (t) return t;
+      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    function updateThemeIcon() {
+      var btn = document.getElementById('themeBtn');
+      if (btn) btn.textContent = currentTheme() === 'dark' ? '☀️' : '🌙';
+    }
+    function toggleTheme() {
+      var next = currentTheme() === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      localStorage.setItem('theme', next);
+      updateThemeIcon();
+    }
+    updateThemeIcon();
+  </script>
+
+  <!-- Логика симулятора -->
+  <script>
+  (function () {
+    'use strict';
+
+    /* ==================== Утилиты ==================== */
+    var $ = function (id) { return document.getElementById(id); };
+    var fmtInt = new Intl.NumberFormat('ru-RU');
+    function fmt1(x) { return x.toLocaleString('ru-RU', { minimumFractionDigits: 1, maximumFractionDigits: 1 }); }
+    function fmt2(x) { return x.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+    function plural(n, one, few, many) {
+      n = Math.floor(Math.abs(n)) % 100;
+      if (n >= 11 && n <= 14) return many;
+      n = n % 10;
+      if (n === 1) return one;
+      if (n >= 2 && n <= 4) return few;
+      return many;
+    }
+    function esc(s) {
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    /* ==================== Математика ==================== */
+    // erf — аппроксимация Абрамовица–Стегуна 7.1.26 (|err| < 1.5e-7)
+    function erf(x) {
+      var s = x < 0 ? -1 : 1;
+      x = Math.abs(x);
+      var t = 1 / (1 + 0.3275911 * x);
+      var y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
+      return s * y;
+    }
+    function normCdf(x) { return 0.5 * (1 - erf(-x / Math.SQRT2)); }
+    function normPdf(x) { return Math.exp(-x * x / 2) / Math.sqrt(2 * Math.PI); }
+
+    // probit — алгоритм Аклама (относительная погрешность < 1.15e-9)
+    function probit(p) {
+      if (p <= 0) return -Infinity;
+      if (p >= 1) return Infinity;
+      var A = [-3.969683028665376e+01, 2.209460984245205e+02, -2.759285104469687e+02, 1.383577518672690e+02, -3.066479806614716e+01, 2.506628277459239e+00];
+      var B = [-5.447609879822406e+01, 1.615858368580409e+02, -1.556989798598866e+02, 6.680131188771972e+01, -1.328068155288572e+01];
+      var C = [-7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e+00, -2.549732539343734e+00, 4.374664141464968e+00, 2.938163982698783e+00];
+      var D = [7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e+00, 3.754408661907416e+00];
+      var pl = 0.02425, ph = 1 - pl, q, r, x;
+      if (p < pl) {
+        q = Math.sqrt(-2 * Math.log(p));
+        x = (((((C[0] * q + C[1]) * q + C[2]) * q + C[3]) * q + C[4]) * q + C[5]) / ((((D[0] * q + D[1]) * q + D[2]) * q + D[3]) * q + 1);
+      } else if (p <= ph) {
+        q = p - 0.5; r = q * q;
+        x = (((((A[0] * r + A[1]) * r + A[2]) * r + A[3]) * r + A[4]) * r + A[5]) * q /
+            (((((B[0] * r + B[1]) * r + B[2]) * r + B[3]) * r + B[4]) * r + 1);
+      } else {
+        q = Math.sqrt(-2 * Math.log(1 - p));
+        x = -(((((C[0] * q + C[1]) * q + C[2]) * q + C[3]) * q + C[4]) * q + C[5]) / ((((D[0] * q + D[1]) * q + D[2]) * q + D[3]) * q + 1);
+      }
+      return x;
+    }
+
+    // Стандартное нормальное N(0,1): метод Марсальи (полярный)
+    var _spare = null;
+    function gauss() {
+      if (_spare !== null) { var v = _spare; _spare = null; return v; }
+      var u, vv, s;
+      do { u = Math.random() * 2 - 1; vv = Math.random() * 2 - 1; s = u * u + vv * vv; } while (s >= 1 || s === 0);
+      var m = Math.sqrt(-2 * Math.log(s) / s);
+      _spare = vv * m;
+      return u * m;
+    }
+
+    // Размер выборки на вариант (z-тест долей, нормальная аппроксимация)
+    function sampleSize(p1, p2, alpha, power, twoSided) {
+      var zA = probit(twoSided ? 1 - alpha / 2 : 1 - alpha);
+      var zB = probit(power);
+      var pbar = (p1 + p2) / 2;
+      var num = Math.pow(zA * Math.sqrt(2 * pbar * (1 - pbar)) + zB * Math.sqrt(p1 * (1 - p1) + p2 * (1 - p2)), 2);
+      return Math.ceil(num / Math.pow(p2 - p1, 2));
+    }
+
+    /* ==================== Состояние ==================== */
+    var S = { base: 10, mde: 10, mdeMode: 'rel', alpha: 5, power: 80, tail: 2, traffic: 10000, te: null };
+    var D = {};  // производные величины
+    var P2_CAP = 0.995;
+
+    function derive() {
+      D.p1 = S.base / 100;
+      var p2 = S.mdeMode === 'rel' ? D.p1 * (1 + S.mde / 100) : D.p1 + S.mde / 100;
+      D.capped = p2 > P2_CAP;
+      D.p2 = Math.min(p2, P2_CAP);
+      D.delta = D.p2 - D.p1;
+      D.alpha = S.alpha / 100;
+      D.power = S.power / 100;
+      D.twoSided = S.tail === 2;
+      D.zA = probit(D.twoSided ? 1 - D.alpha / 2 : 1 - D.alpha);
+      D.zB = probit(D.power);
+      D.n = sampleSize(D.p1, D.p2, D.alpha, D.power, D.twoSided);
+      D.pbar = (D.p1 + D.p2) / 2;
+      D.SE = Math.sqrt(2 * D.pbar * (1 - D.pbar) / D.n);  // в долях
+      D.c = D.zA * D.SE;                                   // порог значимости, в долях
+    }
+
+    /* ==================== Связывание контролов ==================== */
+    function bindPair(rngId, inpId, setter, clampLo, clampHi) {
+      var rng = $(rngId), inp = $(inpId);
+      rng.addEventListener('input', function () { setter(parseFloat(rng.value)); inp.value = rng.value; update(); });
+      inp.addEventListener('input', function () {
+        var v = parseFloat(inp.value);
+        if (isNaN(v)) return;
+        v = Math.min(clampHi, Math.max(clampLo, v));
+        rng.value = v; setter(v); update();
+      });
+      inp.addEventListener('change', function () { inp.value = rng.value; });
+    }
+
+    bindPair('rng-base', 'inp-base', function (v) { S.base = v; }, 1, 95);
+    bindPair('rng-mde', 'inp-mde', function (v) { S.mde = v; }, 0.1, 50);
+
+    function setMdeMode(mode) {
+      if (mode === S.mdeMode) return;
+      // пересчёт значения так, чтобы p2 не прыгала
+      var p1 = S.base / 100;
+      var p2 = S.mdeMode === 'rel' ? p1 * (1 + S.mde / 100) : p1 + S.mde / 100;
+      S.mdeMode = mode;
+      if (mode === 'rel') {
+        S.mde = Math.round((p2 / p1 - 1) * 1000) / 10;
+        setRange('rng-mde', 'inp-mde', 1, 50, 0.5, S.mde);
+      } else {
+        S.mde = Math.round((p2 - p1) * 1000) / 10;
+        setRange('rng-mde', 'inp-mde', 0.05, 10, 0.05, S.mde);
+      }
+      $('mde-rel').classList.toggle('on', mode === 'rel');
+      $('mde-abs').classList.toggle('on', mode === 'abs');
+      update();
+    }
+    function setRange(rngId, inpId, min, max, step, val) {
+      var rng = $(rngId), inp = $(inpId);
+      rng.min = min; rng.max = max; rng.step = step; rng.value = val;
+      inp.min = min; inp.max = max; inp.step = step; inp.value = val;
+    }
+    $('mde-rel').addEventListener('click', function () { setMdeMode('rel'); });
+    $('mde-abs').addEventListener('click', function () { setMdeMode('abs'); });
+
+    $('rng-alpha').addEventListener('input', function () { S.alpha = parseFloat(this.value); update(); });
+    $('rng-power').addEventListener('input', function () { S.power = parseFloat(this.value); update(); });
+
+    function setTail(t) {
+      S.tail = t;
+      $('tail-2').classList.toggle('on', t === 2);
+      $('tail-1').classList.toggle('on', t === 1);
+      update();
+    }
+    $('tail-2').addEventListener('click', function () { setTail(2); });
+    $('tail-1').addEventListener('click', function () { setTail(1); });
+
+    $('inp-traffic').addEventListener('input', function () {
+      var v = parseFloat(this.value);
+      if (!isNaN(v) && v >= 1) { S.traffic = v; renderCalcOnly(); toHash(); }
+    });
+
+    // Истинный эффект в симуляции
+    var rngTe = $('rng-te');
+    function teMax() { return Math.max(Math.ceil(D.delta * 200 * 100) / 100, 0.1); } // ~2×MDE, п.п.
+    function syncTeSlider(preserve) {
+      var kept = preserve && S.te !== null ? S.te : D.delta * 100;
+      var mx = teMax();
+      var step = Math.max(mx / 100, 0.01);
+      rngTe.min = 0; rngTe.max = mx; rngTe.step = step;
+      S.te = Math.min(kept, mx);
+      rngTe.value = Math.round(S.te / step) * step;
+      renderTe();
+    }
+    function renderTe() { $('out-te').textContent = '+' + fmt2(S.te) + ' п.п.'; }
+    rngTe.addEventListener('input', function () {
+      S.te = parseFloat(this.value);
+      renderTe(); markStale();
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('.chip[data-te]'), function (chip) {
+      chip.addEventListener('click', function () {
+        var v = this.getAttribute('data-te');
+        S.te = v === '0' ? 0 : (v === 'mde' ? D.delta * 100 : D.delta * 50);
+        S.te = Math.round(S.te * 100) / 100;
+        rngTe.value = S.te;
+        renderTe(); markStale();
+      });
+    });
+
+    /* ==================== Калькулятор: вывод ==================== */
+    function renderCalc() {
+      $('res-n').textContent = fmtInt.format(D.n);
+      $('res-total').textContent = fmtInt.format(2 * D.n);
+      $('res-p2').innerHTML = fmt1(D.p2 * 100) + ' <small>%</small>';
+
+      var days = Math.ceil(2 * D.n / S.traffic);
+      $('res-days').textContent = days < 1 ? 'меньше ' + plural(1, 'дня', 'дней', 'дней') : fmtInt.format(days) + ' ' + plural(days, 'день', 'дня', 'дней');
+
+      $('res-warn').classList.toggle('show', D.capped);
+
+      var rel = (D.delta / D.p1) * 100;
+      $('res-interpret').innerHTML =
+        'Чтобы с α = ' + fmt1(S.alpha) + '% и мощностью ' + fmt1(S.power) + '% отличить конверсию ' +
+        fmt1(D.p1 * 100) + '% от ' + fmt1(D.p2 * 100) + '% (' +
+        (D.delta >= 0 ? '+' : '−') + fmt2(Math.abs(D.delta * 100)) + ' п.п., ' +
+        (rel >= 0 ? '+' : '−') + fmt1(Math.abs(rel)) + '% к базе), нужно ≈ <b>' + fmtInt.format(D.n) +
+        '</b> наблюдений на вариант — ' + fmtInt.format(2 * D.n) + ' всего.' +
+        ' При трафике ' + fmtInt.format(S.traffic) + ' визитов в день — около ' +
+        (days < 1 ? 'суток' : fmtInt.format(days) + ' ' + plural(days, 'дня', 'дней', 'дней')) + '. ' +
+        'Эффект меньше MDE тест, скорее всего, пропустит.';
+
+      var sePP = D.SE * 100, cPP = D.c * 100;
+      $('res-formula').textContent =
+        'n = (z(1−α' + (D.twoSided ? '/2' : '') + ')·√(2·p̄·(1−p̄)) + z(1−β)·√(p₁(1−p₁)+p₂(1−p₂)))² / (p₂−p₁)²' +
+        '\n' +
+        'z(1−α' + (D.twoSided ? '/2' : '') + ') = ' + fmt2(D.zA) + '    z(1−β) = ' + fmt2(D.zB) + '\n' +
+        'p₁ = ' + D.p1.toFixed(4) + '    p₂ = ' + D.p2.toFixed(4) + '    p̄ = ' + D.pbar.toFixed(4) + '\n' +
+        '\n' +
+        'n = ' + fmtInt.format(D.n) + ' на вариант\n' +
+        'SE оценки эффекта = √(2·p̄(1−p̄)/n) = ' + fmt2(sePP) + ' п.п.\n' +
+        'порог значимости c = z·SE = ' + (D.twoSided ? '±' : '') + fmt2(cPP) + ' п.п.' +
+        (D.capped ? '\n\n⚠ p₂ ограничена ' + (P2_CAP * 100).toFixed(1) + '% — фактический MDE меньше заданного' : '');
+
+      $('sim-n').textContent = fmtInt.format(D.n);
+    }
+    function renderCalcOnly() { renderCalc(); }
+
+    /* ==================== График распределений ==================== */
+    function niceStep(x) {
+      var pow = Math.pow(10, Math.floor(Math.log10(x)));
+      var m = x / pow;
+      return (m < 1.5 ? 1 : m < 3 ? 2 : m < 7 ? 5 : 10) * pow;
+    }
+
+    function renderDist() {
+      var W = 720, H = 348, L = 14, R = 14, T = 16, B = 76;
+      var iw = W - L - R, ih = H - T - B;
+      var SE = D.SE, SEpp = SE * 100;
+      var dPP = D.delta * 100, cPP = D.c * 100;
+      var lo = -4.4 * SEpp, hi = Math.max(dPP + 4.4 * SEpp, 4.4 * SEpp);
+      var ymax = (1 / (SEpp * Math.sqrt(2 * Math.PI))) * 1.10;
+
+      function X(v) { return L + (v - lo) / (hi - lo) * iw; }
+      function Y(dens) { return T + ih - dens / ymax * ih; }
+      function curvePath(mean, x0, x1) {
+        var pts = [], N = 220, i;
+        for (i = 0; i <= N; i++) {
+          var x = x0 + (x1 - x0) * i / N;
+          var dens = normPdf((x - mean) / SEpp) / SEpp;
+          pts.push((i ? 'L' : 'M') + X(x).toFixed(1) + ' ' + Y(dens).toFixed(1));
+        }
+        return pts.join('');
+      }
+      function areaPath(mean, x0, x1) {
+        if (x1 <= x0) return '';
+        return curvePath(mean, x0, x1) + 'L' + X(x1).toFixed(1) + ' ' + (T + ih) + ' L' + X(x0).toFixed(1) + ' ' + (T + ih) + ' Z';
+      }
+      function txt(x, y, s, color, weight, size) {
+        return '<text x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" font-size="' + (size || 12.5) + '" font-weight="' + (weight || 600) +
+          '" fill="' + color + '" text-anchor="middle" style="paint-order:stroke;stroke:var(--card);stroke-width:4px">' + s + '</text>';
+      }
+      function vline(x, dash, color, w) {
+        return '<line x1="' + X(x).toFixed(1) + '" y1="' + T + '" x2="' + X(x).toFixed(1) + '" y2="' + (T + ih) +
+          '" stroke="' + color + '" stroke-width="' + (w || 1.2) + '" stroke-dasharray="' + dash + '"/>';
+      }
+
+      var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg">';
+
+      // сетка по x
+      var step = niceStep((hi - lo) / 7), tick;
+      var t0 = Math.ceil(lo / step) * step;
+      for (tick = t0; tick <= hi + 1e-9; tick += step) {
+        svg += '<line x1="' + X(tick).toFixed(1) + '" y1="' + T + '" x2="' + X(tick).toFixed(1) + '" y2="' + (T + ih) + '" stroke="var(--border)" stroke-width="1" stroke-dasharray="2 5"/>';
+      }
+
+      // заливки
+      svg += '<path d="' + areaPath(dPP, lo, Math.min(cPP, hi)) + '" style="fill:var(--st-amber)" opacity="0.30"/>';   // β
+      svg += '<path d="' + areaPath(dPP, Math.max(cPP, lo), hi) + '" style="fill:var(--st-green)" opacity="0.38"/>';     // мощность
+      svg += '<path d="' + areaPath(0, lo, hi) + '" style="fill:var(--st-h0)" opacity="0.16"/>';                          // H0 целиком
+      svg += '<path d="' + areaPath(0, lo, D.twoSided ? -cPP : lo - 1) + '" style="fill:var(--st-red)" opacity="0.55"/>'; // α левый хвост
+      svg += '<path d="' + areaPath(0, cPP, hi) + '" style="fill:var(--st-red)" opacity="0.55"/>';                        // α правый хвост
+
+      // кривые поверх
+      svg += '<path d="' + curvePath(0, lo, hi) + '" fill="none" style="stroke:var(--st-h0)" stroke-width="2"/>';
+      svg += '<path d="' + curvePath(dPP, lo, hi) + '" fill="none" style="stroke:var(--accent)" stroke-width="2.4"/>';
+
+      // линии: 0, порог, истинный эффект
+      svg += vline(0, 'none', 'var(--border)', 1);
+      svg += vline(cPP, '6 4', 'var(--st-red)', 1.4);
+      if (D.twoSided) svg += vline(-cPP, '6 4', 'var(--st-red)', 1.4);
+      svg += vline(dPP, '2 4', 'var(--accent)', 1.6);
+
+      // подписи кривых — по скатам, чтобы не съезжались при малом MDE
+      svg += txt(Math.max(X(-2.1 * SEpp), L + 56), T + 14, 'H₀: эффекта нет', 'var(--st-h0)', 700);
+      svg += txt(Math.min(X(dPP + 2.1 * SEpp), W - R - 56), T + 14, 'H₁: эффект = MDE', 'var(--accent)', 700);
+
+      // подписи зон: α — у низа хвостов, β и мощность — над кривой H₁
+      svg += txt(X(cPP + 0.6 * SEpp), T + ih - 10, D.twoSided ? 'α/2' : 'α', 'var(--st-red)');
+      if (D.twoSided) svg += txt(X(-cPP - 0.6 * SEpp), T + ih - 10, 'α/2', 'var(--st-red)');
+      var betaX = (dPP + cPP) / 2;
+      var betaY = Math.max(T + 14, Y(normPdf((betaX - dPP) / SEpp) / SEpp) - 12);
+      svg += txt(X(betaX), betaY, 'β', 'var(--st-amber)');
+      var pwX = (cPP + hi) / 2;
+      var pwY = Math.max(T + 40, Y(normPdf((pwX - dPP) / SEpp) / SEpp) - 12);
+      svg += txt(X(pwX), pwY, 'мощность', 'var(--st-green)');
+
+      // подписи линий: отдельная строка под тиками оси
+      var cLabelX = X(cPP), mdeLabelX = X(dPP);
+      if (Math.abs(mdeLabelX - cLabelX) < 36) mdeLabelX = cLabelX + 36;
+      svg += txt(cLabelX, T + ih + 42, '+c', 'var(--st-red)');
+      if (D.twoSided) svg += txt(X(-cPP), T + ih + 42, '−c', 'var(--st-red)');
+      svg += txt(mdeLabelX, T + ih + 42, 'MDE', 'var(--accent)');
+
+      // ось + тики (строка 1), подписи линий (строка 2), заголовок оси (строка 3)
+      svg += '<line x1="' + L + '" y1="' + (T + ih) + '" x2="' + (W - R) + '" y2="' + (T + ih) + '" stroke="var(--border)" stroke-width="1"/>';
+      for (tick = t0; tick <= hi + 1e-9; tick += step) {
+        var lb = Math.abs(tick) < 1e-9 ? '0' : (tick > 0 ? '+' : '−') + fmt2(Math.abs(tick));
+        svg += txt(X(tick), T + ih + 22, lb, 'var(--muted)', 400, 11.5);
+      }
+      svg += txt(X(lo + (hi - lo) / 2), T + ih + 60, 'оценка эффекта «B − A», процентные пункты', 'var(--muted)', 400, 11.5);
+      svg += '</svg>';
+
+      $('distChart').innerHTML = svg;
+
+      $('distLegend').innerHTML =
+        '<span><i class="sw" style="background:var(--st-red)"></i>α = <b>' + fmt1(D.alpha * 100) + '%</b> — ложные победы</span>' +
+        '<span><i class="sw" style="background:var(--st-amber)"></i>β = <b>' + fmt1((1 - D.power) * 100) + '%</b> — пропущенный эффект</span>' +
+        '<span><i class="sw" style="background:var(--st-green)"></i>мощность = <b>' + fmt1(D.power * 100) + '%</b> — пойманный эффект</span>' +
+        '<span><i class="sw" style="background:var(--st-h0);opacity:.6"></i>H₀ &nbsp;<i class="sw" style="background:var(--accent)"></i>H₁</span>';
+    }
+
+    /* ==================== Симуляция ==================== */
+    var lastRes = null;
+
+    function runSim() {
+      var K = parseInt($('sel-runs').value, 10);
+      var te = S.te / 100;                 // истинный эффект, доли
+      var pB = Math.min(Math.max(D.p1 + te, 0.001), 0.999);
+      var sdA = Math.sqrt(D.p1 * (1 - D.p1) / D.n);
+      var sdB = Math.sqrt(pB * (1 - pB) / D.n);
+      var lifts = [], pvals = [], sigCount = 0, sigNeg = 0, sigLiftSum = 0;
+      var i, pa, pb, d, pbar, se, z, pv;
+
+      for (i = 0; i < K; i++) {
+        pa = D.p1 + gauss() * sdA;
+        pb = pB + gauss() * sdB;
+        d = pb - pa;
+        pbar = (pa + pb) / 2;
+        se = Math.sqrt(2 * pbar * (1 - pbar) / D.n);
+        z = d / se;
+        pv = D.twoSided ? 2 * (1 - normCdf(Math.abs(z))) : 1 - normCdf(z);
+        lifts.push(d * 100);
+        pvals.push(pv);
+        if (pv < D.alpha) {
+          sigCount++;
+          sigLiftSum += d * 100;
+          if (d < 0) sigNeg++;
+        }
+      }
+      lastRes = {
+        K: K, te: S.te, teReal: (pB - D.p1) * 100,
+        lifts: lifts, pvals: pvals,
+        sigShare: sigCount / K,
+        sigNegShare: sigCount ? sigNeg / sigCount : 0,
+        meanSigLift: sigCount ? sigLiftSum / sigCount : NaN
+      };
+      renderSim();
+      toHash();
+    }
+
+    function renderSim() {
+      if (!lastRes) return;
+      var r = lastRes;
+      var html = '';
+
+      html += '<div class="sim-cards">';
+      html += '<div class="sim-card"><div class="k" style="color:var(--st-green)">' + fmt1(r.sigShare * 100) + '%</div>' +
+        '<div class="l">экспериментов закончились значимо — из ' + fmtInt.format(r.K) + ' прогонов</div></div>';
+      if (r.sigShare > 0) {
+        html += '<div class="sim-card"><div class="k" style="color:var(--accent)">' +
+          (r.meanSigLift >= 0 ? '+' : '−') + fmt2(Math.abs(r.meanSigLift)) + ' п.п.</div>' +
+          '<div class="l">средний измеренный лифт среди значимых (истинный: ' +
+          (r.te >= 0 ? '+' : '−') + fmt2(Math.abs(r.te)) + ' п.п.)</div></div>';
+        html += '<div class="sim-card"><div class="k" style="color:var(--st-red)">' + fmt1(r.sigNegShare * 100) + '%</div>' +
+          '<div class="l">среди значимых — с эффектом «в обратную сторону»</div></div>';
+      }
+      html += '</div>';
+
+      html += '<div class="chart"><h3 class="ch-title">Измеренный эффект по прогонам, п.п.</h3><div id="liftHist"></div>' +
+        '<div class="lg">' +
+        '<span><i class="sw" style="background:var(--accent);opacity:.55"></i>измеренный лифт</span>' +
+        '<span><i class="sw" style="background:var(--st-h0)"></i>теория: N(эффект, SE)</span>' +
+        '<span><i class="sw" style="background:var(--st-green);opacity:.4"></i>правее +c — значимо</span>' +
+        '</div></div>';
+      html += '<div class="chart"><h3 class="ch-title">Распределение p-value</h3><div id="pvalHist"></div>' +
+        '<div class="lg">' +
+        '<span><i class="sw" style="background:var(--st-red)"></i>p &lt; α — значимые прогоны</span>' +
+        '<span><i class="sw" style="background:var(--muted)"></i>пунктир — равномерно, как было бы при H₀</span>' +
+        '</div></div>';
+
+      var te0 = Math.abs(r.te) < 1e-9;
+      var atMde = Math.abs(r.te - D.delta * 100) < 1e-9;
+      var title, text;
+      if (te0) {
+        title = 'Эффекта нет — а «победы» есть';
+        text = 'Значимыми оказались ' + fmt1(r.sigShare * 100) + '% прогонов при α = ' + fmt1(D.alpha * 100) +
+          '% — это ошибка I рода: без реального эффекта тест всё равно иногда находит «победителя», ' +
+          'причём в обе стороны. Именно поэтому значимый результат без заранее рассчитанного объёма выборки ' +
+          'и зафиксированной гипотезы — не доказательство.';
+      } else if (atMde) {
+        title = 'Мощность в действии — и «проклятие победителя»';
+        text = 'Поймали ' + fmt1(r.sigShare * 100) + '% прогонов — это и есть мощность ' + fmt1(D.power * 100) +
+          '%. Но посмотрите на средний лифт среди значимых: ' +
+          (r.meanSigLift >= 0 ? '+' : '−') + fmt2(Math.abs(r.meanSigLift)) + ' п.п. при истинном эффекте ' +
+          (r.te >= 0 ? '+' : '−') + fmt2(Math.abs(r.te)) + ' п.п. Каждый «значимый победитель» в среднем завышает эффект: ' +
+          'в значимые чаще попадают прогоны с удачно большим измеренным лифтом. Не обещайте бизнесу измеренное — истинный эффект ниже.';
+      } else {
+        title = 'Эффект меньше MDE — тест чаще молчит';
+        text = 'При истинном эффекте ' + (r.te >= 0 ? '+' : '−') + fmt2(Math.abs(r.te)) + ' п.п. (MDE = ' +
+          '+' + fmt2(D.delta * 100) + ' п.п.) значимы только ' + fmt1(r.sigShare * 100) +
+          '% прогонов. Снижение MDE или рост мощности покупается кратным ростом выборки — вернитесь к калькулятору и проверьте.';
+      }
+      html += '<div class="insight"><h4>' + title + '</h4><p>' + text + '</p></div>';
+
+      $('simResults').innerHTML = html;
+      drawLiftHist();
+      drawPvalHist();
+    }
+
+    function markStale() {
+      var el = $('simResults');
+      if (!lastRes || el.querySelector('.sim-empty')) return;
+      if (!el.querySelector('.stale')) {
+        var p = document.createElement('p');
+        p.className = 'stale';
+        p.textContent = 'Параметры изменились — запустите симуляцию заново.';
+        el.insertBefore(p, el.firstChild);
+      }
+    }
+
+    /* ---------- Гистограмма измеренного лифта ---------- */
+    function drawLiftHist() {
+      var r = lastRes;
+      var W = 720, H = 260, L = 14, R = 14, T = 26, B = 38;
+      var iw = W - L - R, ih = H - T - B;
+      var SEpp = D.SE * 100, cPP = D.c * 100, te = r.te;
+
+      var lo = Math.min(-3.6 * SEpp, Math.min.apply(null, r.lifts));
+      var hi = Math.max(3.6 * SEpp, te + 3.6 * SEpp, Math.max.apply(null, r.lifts));
+      var bins = 46, bw = (hi - lo) / bins;
+      var counts = [], i, b;
+      for (i = 0; i < bins; i++) counts[i] = 0;
+      for (i = 0; i < r.lifts.length; i++) {
+        b = Math.min(bins - 1, Math.max(0, Math.floor((r.lifts[i] - lo) / bw)));
+        counts[b]++;
+      }
+      var densMax = 0;
+      for (i = 0; i < bins; i++) densMax = Math.max(densMax, counts[i] / (r.K * bw));
+      var pdfPeak = 1 / (SEpp * Math.sqrt(2 * Math.PI));
+      var ymax = Math.max(densMax, pdfPeak) * 1.12;
+
+      function X(v) { return L + (v - lo) / (hi - lo) * iw; }
+      function Y(d) { return T + ih - d / ymax * ih; }
+
+      var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg">';
+
+      // зоны отвержения
+      svg += '<rect x="' + X(cPP).toFixed(1) + '" y="' + T + '" width="' + Math.max(0, X(hi) - X(cPP)).toFixed(1) + '" height="' + ih + '" style="fill:var(--st-green)" opacity="0.09"/>';
+      if (D.twoSided) svg += '<rect x="' + X(lo).toFixed(1) + '" y="' + T + '" width="' + Math.max(0, X(-cPP) - X(lo)).toFixed(1) + '" height="' + ih + '" style="fill:var(--st-red)" opacity="0.09"/>';
+
+      // столбцы
+      for (i = 0; i < bins; i++) {
+        if (!counts[i]) continue;
+        var d0 = counts[i] / (r.K * bw);
+        svg += '<rect x="' + (X(lo + i * bw) + 0.6).toFixed(1) + '" y="' + Y(d0).toFixed(1) +
+          '" width="' + Math.max(1, X(lo + (i + 1) * bw) - X(lo + i * bw) - 1.2).toFixed(1) +
+          '" height="' + (T + ih - Y(d0)).toFixed(1) + '" style="fill:var(--accent)" opacity="0.55" rx="2"/>';
+      }
+
+      // теоретическая кривая N(te, SE)
+      var pts = [], N = 200;
+      for (i = 0; i <= N; i++) {
+        var x = lo + (hi - lo) * i / N;
+        pts.push((i ? 'L' : 'M') + X(x).toFixed(1) + ' ' + Y(normPdf((x - te) / SEpp) / SEpp).toFixed(1));
+      }
+      svg += '<path d="' + pts.join('') + '" fill="none" stroke="var(--st-h0)" stroke-width="2"/>';
+
+      // вертикальные линии
+      function vline(x, color, dash, w) {
+        return '<line x1="' + X(x).toFixed(1) + '" y1="' + T + '" x2="' + X(x).toFixed(1) + '" y2="' + (T + ih) + '" stroke="' + color + '" stroke-width="' + (w || 1.3) + '" stroke-dasharray="' + dash + '"/>';
+      }
+      svg += vline(0, 'var(--muted)', '4 4');
+      svg += vline(te, 'var(--accent)', 'none', 2);
+      svg += vline(cPP, 'var(--st-green)', '6 4');
+      if (D.twoSided) svg += vline(-cPP, 'var(--st-red)', '6 4');
+
+      // подписи
+      function txt(x, y, s, color, anchor, size, weight) {
+        return '<text x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" font-size="' + (size || 11.5) + '" font-weight="' + (weight || 400) +
+          '" fill="' + color + '" text-anchor="' + (anchor || 'middle') + '" style="paint-order:stroke;stroke:var(--card);stroke-width:3.5px">' + s + '</text>';
+      }
+      // подписи линий — двумя уровнями, чтобы не съезжались
+      var teX = X(te), teAnchor = 'middle';
+      if (teX > W - 64) { teAnchor = 'end'; teX = W - 12; }
+      svg += txt(teX, T + 14, 'истинный эффект', 'var(--accent)', teAnchor, 11.5, 700);
+      svg += txt(X(cPP), T + 34, '+c', 'var(--st-green)');
+      if (D.twoSided) svg += txt(X(-cPP), T + 34, '−c', 'var(--st-red)');
+
+      // ось
+      svg += '<line x1="' + L + '" y1="' + (T + ih) + '" x2="' + (W - R) + '" y2="' + (T + ih) + '" stroke="var(--border)"/>';
+      var step = niceStep((hi - lo) / 7);
+      var t0 = Math.ceil(lo / step) * step;
+      for (var tick = t0; tick <= hi + 1e-9; tick += step) {
+        var lb = Math.abs(tick) < 1e-9 ? '0' : (tick > 0 ? '+' : '−') + fmt2(Math.abs(tick));
+        svg += txt(X(tick), T + ih + 28, lb, 'var(--muted)');
+      }
+      svg += '</svg>';
+      $('liftHist').innerHTML = svg;
+    }
+
+    /* ---------- Гистограмма p-value ---------- */
+    function drawPvalHist() {
+      var r = lastRes;
+      var W = 720, H = 240, L = 14, R = 14, T = 12, B = 34;
+      var iw = W - L - R, ih = H - T - B;
+      var bins = 20, bw = 1 / bins;
+      var counts = [], i, b;
+      for (i = 0; i < bins; i++) counts[i] = 0;
+      for (i = 0; i < r.pvals.length; i++) {
+        b = Math.min(bins - 1, Math.max(0, Math.floor(r.pvals[i] / bw)));
+        counts[b]++;
+      }
+      var ymax = Math.max(1.35, Math.max.apply(null, counts) / (r.K * bw)) ;
+
+      function X(v) { return L + v * iw; }
+      function Y(d) { return T + ih - d / ymax * ih; }
+
+      var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg">';
+      function txtStatic(x, y, s, color, size, weight) {
+        return '<text x="' + x.toFixed(1) + '" y="' + y + '" font-size="' + size + '" font-weight="' + weight + '" fill="' + color + '" text-anchor="middle" style="paint-order:stroke;stroke:var(--card);stroke-width:3.5px">' + s + '</text>';
+      }
+      // зона значимости и её граница
+      svg += '<rect x="' + X(0) + '" y="' + T + '" width="' + (X(D.alpha) - X(0)).toFixed(1) + '" height="' + ih + '" style="fill:var(--st-red)" opacity="0.10"/>';
+      svg += '<line x1="' + X(D.alpha).toFixed(1) + '" y1="' + T + '" x2="' + X(D.alpha).toFixed(1) + '" y2="' + (T + ih) + '" stroke="var(--st-red)" stroke-width="1.4" stroke-dasharray="6 4"/>';
+      for (i = 0; i < bins; i++) {
+        if (!counts[i]) continue;
+        var d0 = counts[i] / (r.K * bw);
+        var inSig = (i * bw) < D.alpha - 1e-12;
+        svg += '<rect x="' + (X(i * bw) + 0.8).toFixed(1) + '" y="' + Y(d0).toFixed(1) +
+          '" width="' + Math.max(1, X((i + 1) * bw) - X(i * bw) - 1.6).toFixed(1) + '" height="' + (T + ih - Y(d0)).toFixed(1) +
+          '" style="fill:' + (inSig ? 'var(--st-red)' : 'var(--accent)') + '" opacity="' + (inSig ? 0.75 : 0.5) + '" rx="2"/>';
+      }
+      // равномерное распределение — ожидание при H0 (пояснение — в легенде под графиком)
+      svg += '<line x1="' + X(0) + '" y1="' + Y(1) + '" x2="' + X(1) + '" y2="' + Y(1) + '" stroke="var(--muted)" stroke-width="1.6" stroke-dasharray="6 4"/>';
+
+      svg += '<line x1="' + L + '" y1="' + (T + ih) + '" x2="' + (W - R) + '" y2="' + (T + ih) + '" stroke="var(--border)"/>';
+      var marks = [0, 0.25, 0.5, 0.75, 1];
+      for (i = 0; i < marks.length; i++) {
+        svg += txtStatic(X(marks[i]), T + ih + 26, marks[i].toLocaleString('ru-RU'), 'var(--muted)', 11.5, 400);
+      }
+      svg += '</svg>';
+      $('pvalHist').innerHTML = svg;
+    }
+
+    /* ==================== Ссылка с параметрами ==================== */
+    function toHash() {
+      var h = '#p=' + S.base + '&m=' + S.mde + '&mt=' + S.mdeMode + '&a=' + S.alpha + '&pw=' + S.power +
+        '&t=' + S.tail + '&tr=' + S.traffic;
+      if (S.te !== null) h += '&te=' + (Math.round(S.te * 100) / 100);
+      try { history.replaceState(null, '', h); } catch (e) {}
+    }
+    function fromHash() {
+      if (!location.hash || location.hash.length < 3) return;
+      var q = {};
+      location.hash.slice(1).split('&').forEach(function (kv) {
+        var p = kv.split('=');
+        if (p[0]) q[p[0]] = decodeURIComponent(p[1] || '');
+      });
+      function num(key, lo, hi, cur) {
+        var v = parseFloat(q[key]);
+        return (isNaN(v) || v < lo || v > hi) ? cur : v;
+      }
+      S.base = num('p', 1, 95, S.base);
+      S.mde = num('m', 0.05, 50, S.mde);
+      if (q.mt === 'abs') S.mdeMode = 'abs'; else if (q.mt === 'rel') S.mdeMode = 'rel';
+      S.alpha = num('a', 0.5, 20, S.alpha);
+      S.power = num('pw', 50, 99, S.power);
+      S.tail = (q.t === '1') ? 1 : (q.t === '2' ? 2 : S.tail);
+      S.traffic = num('tr', 1, 1e9, S.traffic);
+      if (q.te !== undefined) { var te = parseFloat(q.te); if (!isNaN(te) && te >= 0) S.te = te; }
+    }
+
+    $('copyLink').addEventListener('click', function () {
+      var btn = this;
+      var url = location.href.split('#')[0] + location.hash;
+      function done() {
+        btn.textContent = 'Ссылка скопирована ✓';
+        setTimeout(function () { btn.textContent = 'Скопировать ссылку с параметрами'; }, 2200);
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(done, done);
+      } else { done(); }
+    });
+
+    /* ==================== Обновление ==================== */
+    function update() {
+      derive();
+      renderCalc();
+      renderDist();
+      syncTeSlider(true);
+      markStale();
+      toHash();
+    }
+
+    $('runBtn').addEventListener('click', function () {
+      this.textContent = 'Считаю…';
+      var self = this;
+      setTimeout(function () {
+        runSim();
+        self.textContent = 'Запустить симуляцию';
+      }, 30);
+    });
+    $('sel-runs').addEventListener('change', markStale);
+
+    /* ==================== Инициализация ==================== */
+    fromHash();
+    // выставляем контролы в соответствии с состоянием (после fromHash)
+    $('rng-base').value = S.base; $('inp-base').value = S.base;
+    if (S.mdeMode === 'abs') {
+      setRange('rng-mde', 'inp-mde', 0.05, 10, 0.05, Math.min(S.mde, 10));
+      S.mde = Math.min(S.mde, 10);
+      $('mde-rel').classList.remove('on'); $('mde-abs').classList.add('on');
+    } else {
+      S.mde = Math.max(1, Math.min(50, S.mde));
+      $('rng-mde').value = S.mde; $('inp-mde').value = S.mde;
+    }
+    $('rng-alpha').value = S.alpha; $('out-alpha').textContent = fmt1(S.alpha) + ' %';
+    $('rng-power').value = S.power; $('out-power').textContent = fmt1(S.power) + ' %';
+    if (S.tail === 1) { $('tail-2').classList.remove('on'); $('tail-1').classList.add('on'); }
+    $('inp-traffic').value = S.traffic;
+
+    // alpha/power output обновляется в update? нет — отдельно:
+    $('rng-alpha').addEventListener('input', function () { $('out-alpha').textContent = fmt1(S.alpha) + ' %'; });
+    $('rng-power').addEventListener('input', function () { $('out-power').textContent = fmt1(S.power) + ' %'; });
+
+    derive();
+    renderCalc();
+    renderDist();
+    syncTeSlider(true);   // true: сохраняет te из ссылки, если она была
+    toHash();
+  })();
+  </script>
+
+</body>
+</html>
